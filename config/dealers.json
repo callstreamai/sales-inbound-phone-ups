@@ -1,0 +1,32 @@
+[
+  {
+    "dealer_id": "balise-toyota-warwick",
+    "name": "Balise Toyota of Warwick",
+    "brand": "Toyota",
+    "platform": "dealeron",
+    "website": "https://www.balisetoyotaofwarwick.com",
+    "srp": {
+      "new": "/searchnew.aspx",
+      "used": "/searchused.aspx"
+    },
+    "live_check_url": "https://www.balisetoyotaofwarwick.com/sitemap.aspx",
+    "address": "1400 Post Rd, Warwick, RI 02888",
+    "timezone": "America/New_York",
+    "inbound_numbers": [],
+    "sales_phone": "+14013525911",
+    "sales_transfer_number": "+14013525911",
+    "service_phone": "+14013581155",
+    "parts_phone": "+14017815209",
+    "adf_email": "",
+    "sales_hours": {
+      "mon": ["09:00", "20:00"],
+      "tue": ["09:00", "20:00"],
+      "wed": ["09:00", "20:00"],
+      "thu": ["09:00", "20:00"],
+      "fri": ["09:00", "20:00"],
+      "sat": ["09:00", "18:00"],
+      "sun": null
+    },
+    "hours_verified": false
+  }
+]
