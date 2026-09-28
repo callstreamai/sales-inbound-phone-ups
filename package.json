@@ -1,0 +1,19 @@
+{
+  "name": "sales-inbound-phone-ups",
+  "version": "0.1.0",
+  "description": "Bland-compatible inventory search and ADF lead API for dealership sales inbound calls.",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "playwright-core": "^1.46.1",
+    "zod": "^3.23.8"
+  }
+}

@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: sales-inbound-phone-ups
+    runtime: node
+    plan: starter
+    region: ohio
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: LEAD_MODE
+        value: safe
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: RESEND_API_KEY
+        sync: false
+      - key: BROWSERLESS_API_KEY
+        sync: false
+      - key: LEAD_FROM_EMAIL
+        sync: false
+      - key: SAFE_LEAD_EMAIL
+        sync: false
