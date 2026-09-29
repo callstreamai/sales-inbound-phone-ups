@@ -10,10 +10,10 @@ const FIELDS = {
   make: [/^(vehicle)?make(name)?$/],
   model: [/^(vehicle)?model(name)?$/],
   trim: [/^(vehicle)?trim(name|level)?$/, /^(vehicle)?series$/],
-  stock: [/stock(number|num|no)?$/, /^stockid$/],
+  stock: [/^(vehicle)?stock(number|num|no|id)$/, /^stk(number|num|no)?$/],
   body: [/body(style|type)?$/],
-  exterior_color: [/^(vehicle)?(exterior|ext)(color|colour)(name|generic)?$/, /^(vehicle)?color$/],
-  interior_color: [/^(vehicle)?(interior|int)(color|colour)(name)?$/],
+  exterior_color: [/^(vehicle)?(exterior|ext)(color|colour)(name|label|generic|description)?$/, /^(vehicle)?color(name|label)?$/],
+  interior_color: [/^(vehicle)?(interior|int)(color|colour)(name|label|description)?$/],
   mileage: [/^(vehicle)?(odometer|mileage|miles)$/],
   fuel: [/fuel(type)?$/],
   drivetrain: [/^(vehicle)?(drivetrain|drive(type|line)?)$/],
@@ -38,25 +38,25 @@ function str(v) {
   return String(v).trim();
 }
 
-// Flatten an object's own scalars plus one nested level, keys lowercased with no punctuation.
+// Flatten an object's own scalars plus two nested levels, keys lowercased with no punctuation.
+// Shallower keys win, so a vehicle's own fields beat anything inside a sub-model.
 function flat(obj) {
   const out = {};
   const put = (k, v) => {
     const key = k.toLowerCase().replace(/[^a-z0-9]/g, '');
     if (!(key in out)) out[key] = v;
   };
-  for (const [k, v] of Object.entries(obj)) {
-    if (v == null) continue;
-    if (typeof v !== 'object') put(k, v);
-  }
-  for (const [, v] of Object.entries(obj)) {
-    if (v && typeof v === 'object' && !Array.isArray(v)) for (const [k2, v2] of Object.entries(v)) if (v2 != null && typeof v2 !== 'object') put(k2, v2);
-  }
+  const scalars = (o) => Object.entries(o).filter(([, v]) => v != null && typeof v !== 'object');
+  const children = (o) => Object.values(o).filter((v) => v && typeof v === 'object' && !Array.isArray(v));
+  for (const [k, v] of scalars(obj)) put(k, v);
+  const level1 = children(obj);
+  for (const c of level1) for (const [k, v] of scalars(c)) put(k, v);
+  for (const c of level1) for (const cc of children(c)) for (const [k, v] of scalars(cc)) put(k, v);
   return out;
 }
 
 function pick(f, patterns) {
-  for (const re of patterns) for (const [k, v] of Object.entries(f)) if (re.test(k) && str(v)) return v;
+  for (const re of patterns) for (const [k, v] of Object.entries(f)) if (re.test(k) && str(v) && typeof v !== 'boolean' && !/^#[0-9a-f]{3,8}$/i.test(str(v))) return v;
   return null;
 }
 

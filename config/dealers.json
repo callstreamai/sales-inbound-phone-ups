@@ -19,14 +19,40 @@
     "parts_phone": "+14017815209",
     "adf_email": "",
     "sales_hours": {
-      "mon": ["09:00", "20:00"],
-      "tue": ["09:00", "20:00"],
-      "wed": ["09:00", "20:00"],
-      "thu": ["09:00", "20:00"],
-      "fri": ["09:00", "20:00"],
-      "sat": ["09:00", "18:00"],
+      "mon": [
+        "09:00",
+        "20:00"
+      ],
+      "tue": [
+        "09:00",
+        "20:00"
+      ],
+      "wed": [
+        "09:00",
+        "20:00"
+      ],
+      "thu": [
+        "09:00",
+        "20:00"
+      ],
+      "fri": [
+        "09:00",
+        "20:00"
+      ],
+      "sat": [
+        "09:00",
+        "18:00"
+      ],
       "sun": null
     },
-    "hours_verified": false
+    "hours_verified": false,
+    "direct_sources": {
+      "new": [
+        "https://www.balisetoyotaofwarwick.com/api/vhcliaa/vehicle-pages/cosmos/srp/vehicles/29816/3376849"
+      ],
+      "used": [
+        "https://www.balisetoyotaofwarwick.com/api/vhcliaa/vehicle-pages/cosmos/srp/vehicles/29816/3376864"
+      ]
+    }
   }
 ]

@@ -21,7 +21,8 @@ export function spokenResults(matches, total, q) {
   const top = matches.slice(0, 3);
   const m = matches[0];
   const what = [q.year, q.make ? m.make : '', q.model ? m.model : '', q.trim && matches.every((v) => v.trim === m.trim) ? m.trim : ''].filter(Boolean).join(' ') || 'that';
-  const lead = total === 1 ? `I found one ${what} in stock:` : `I found ${total} ${what}${total > 3 ? ', here are three of them' : ''}:`;
+  const plural = /[sxz]$/i.test(what) ? what : what + 's';
+  const lead = total === 1 ? `I found one ${what} in stock:` : `I found ${total} ${plural}${total > 3 ? ', here are three of them' : ''}:`;
   const list = top.map((v, i) => `${['First', 'Second', 'Third'][i]}, ${spokenVehicle(v)}`).join('. ');
   return `${lead} ${list}.`;
 }

@@ -26,6 +26,14 @@ function textMatch(field, want) {
   return a.includes(b) || b.includes(a) ? 1 : -1;
 }
 
+// Known model names, longest first so "Corolla Cross" wins over "Corolla".
+const MODELS = ['grand highlander', 'corolla cross', 'land cruiser', 'rav4 prime', 'prius prime', 'gr corolla', 'gr supra', 'highlander', 'sequoia', 'tacoma', 'tundra', '4runner', 'corolla', 'camry', 'sienna', 'prius', 'crown', 'bz4x', 'rav4', 'gr86', 'supra', 'venza', 'mirai', 'chr', 'avalon', 'yaris'];
+export function detectModel(text) {
+  const t = ' ' + spoken(text) + ' ';
+  for (const m of MODELS) { const re = new RegExp('\\b' + m.replace(/ /g, ' ?') + 's?\\b'); if (re.test(t)) return m; }
+  return '';
+}
+
 export function searchVehicles(vehicles, q) {
   const wantCond = q.condition ? norm(q.condition) : '';
   const wantHybrid = /hybrid|plug|phev|electric|ev\b/.test(norm(q.fuel_type || ''));
@@ -42,7 +50,7 @@ export function searchVehicles(vehicles, q) {
     if (q.make) { const m = textMatch(v.make, q.make); if (m < 0) continue; score += m * 2; }
     if (q.model) { const m = modelMatch(v, q.model); if (m < 0) continue; score += m * 10; }
     if (q.year) { const y = Number(q.year); if (v.year === y) score += 6; else if (Math.abs(v.year - y) <= 1) { score += 1; notes.push('year_near'); } else continue; }
-    if (q.trim) { const m = textMatch(v.trim, q.trim); if (m > 0) score += 8; else notes.push('trim_miss'); }
+    if (q.trim) { const a = squash(spoken(v.trim)), b = squash(spoken(q.trim)); const m = a && b && (a === b || a.startsWith(b) || (b.length >= 6 && b.startsWith(a) && a.length >= 4)) ? 1 : -1; if (m > 0) score += 8; else notes.push('trim_miss'); }
     if (q.fuel_type) { const hay = norm(`${v.fuel} ${v.model} ${v.trim} ${v.engine}`); const isHybrid = /hybrid|plug|phev|electric|\bev\b|i force max/.test(hay); if (wantHybrid ? isHybrid : true) score += wantHybrid ? 6 : 0; else notes.push('fuel_miss'); }
     if (q.body_style) { const m = textMatch(`${v.body} ${v.model}`, q.body_style); if (m > 0) score += 3; else if (m < 0) notes.push('body_miss'); }
     if (q.color) { const m = textMatch(v.exterior_color, q.color); if (m > 0) score += 4; else notes.push('color_miss'); }

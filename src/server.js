@@ -3,8 +3,8 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { z } from 'zod';
 import { findDealer, allDealers, salesStatus } from './dealers.js';
-import { getSnapshot, refreshDealer, refreshAll, startScheduler, cacheSummary, loadSeed } from './inventory/cache.js';
-import { searchVehicles, facets } from './inventory/search.js';
+import { getSnapshot, refreshDealer, refreshAll, startScheduler, cacheSummary, loadSeed, knownSources } from './inventory/cache.js';
+import { searchVehicles, facets, detectModel } from './inventory/search.js';
 import { spokenVehicle, spokenResults, spokenPrice } from './inventory/spoken.js';
 import { vinStillListed } from './inventory/liveCheck.js';
 import { buildAdf } from './lead/adf.js';
@@ -41,7 +41,7 @@ const DealerRef = { dealer_id: optStr, to: optStr, call_id: optStr };
 const SearchSchema = z.object({
   ...DealerRef,
   condition: optStr, year: optNum, make: optStr, model: optStr, trim: optStr, fuel_type: optStr,
-  body_style: optStr, color: optStr, max_price: optNum, max_mileage: optNum, stock: optStr, vin: optStr,
+  body_style: optStr, color: optStr, max_price: optNum, max_mileage: optNum, stock: optStr, vin: optStr, vehicle_interest_text: optStr,
 });
 const VehicleSchema = z.object({ ...DealerRef, stock: optStr, vin: optStr });
 const LeadSchema = z.object({
@@ -90,19 +90,30 @@ app.post('/call/start', requireAuth, (req, res) => {
 app.post('/inventory/search', requireAuth, (req, res) => {
   const dealer = resolveDealer(req, res); if (!dealer) return;
   const q = SearchSchema.parse(req.body || {});
+  if (!q.model && q.vehicle_interest_text) q.model = detectModel(q.vehicle_interest_text);
+  if (q.model && /s$/i.test(q.model) && !/cross|prius/i.test(q.model)) q.model = q.model.replace(/s$/i, '');
   const snap = getSnapshot(dealer.dealer_id);
   if (!snap.vehicles.length) {
     return res.json({ success: false, found: false, status: 'inventory_unavailable', match_count: 0, results_spoken: '', message: 'Inventory has not loaded for this dealer.' });
   }
-  const { matches, relaxed } = searchVehicles(snap.vehicles, q);
+  let { matches, relaxed } = searchVehicles(snap.vehicles, q);
+  let broadened = '';
+  // Nothing matched: drop the narrowest preferences one at a time so the agent can offer the closest units.
+  if (!matches.length) {
+    for (const drop of [['trim'], ['trim', 'color'], ['trim', 'color', 'year'], ['trim', 'color', 'year', 'max_price'], ['trim', 'color', 'year', 'max_price', 'condition']]) {
+      const q2 = { ...q }; for (const k of drop) q2[k] = k === 'year' || k === 'max_price' ? null : '';
+      const r = searchVehicles(snap.vehicles, q2);
+      if (r.matches.length) { matches = r.matches; relaxed = true; broadened = `Nothing matched exactly; closest units shown after ignoring ${drop.join(', ')}.`; break; }
+    }
+  }
   const top = matches.slice(0, 3);
   const modelPool = q.model ? searchVehicles(snap.vehicles, { condition: q.condition, make: q.make, model: q.model }).matches : matches;
   const f = facets(modelPool);
   const payload = {
-    success: true, found: matches.length > 0, status: matches.length ? (relaxed ? 'partial_match' : 'match') : 'no_match', match_count: matches.length,
+    success: true, found: matches.length > 0, status: matches.length ? (relaxed ? 'partial_match' : 'match') : 'no_match', match_count: matches.length, broadened_note: broadened,
     model_total: modelPool.length, results_spoken: spokenResults(top, matches.length, q),
     no_match_spoken: matches.length ? '' : (modelPool.length ? `I don't see one matching everything you asked for, but I do have ${modelPool.length} ${[q.year, q.make, q.model].filter(Boolean).join(' ')} in stock.` : `I'm not seeing that in stock right now.`),
-    relaxed_note: relaxed ? 'Closest matches shown; some preferences (trim, color, or budget) were not met exactly.' : '',
+    relaxed_note: broadened || (relaxed ? 'Closest matches shown; some preferences (trim, color, or budget) were not met exactly.' : ''),
     available_trims: f.trims.join(', '), available_colors: f.colors.join(', '), available_years: f.years.join(', '),
     price_low_spoken: f.price_low ? spokenPrice(f.price_low) : '', price_high_spoken: f.price_high ? spokenPrice(f.price_high) : '',
     inventory_as_of: snap.refreshed_at, ...flatVehicle(top[0], 'vehicle'), ...flatVehicle(top[0], 'vehicle_1'), ...flatVehicle(top[1], 'vehicle_2'), ...flatVehicle(top[2], 'vehicle_3'),
@@ -169,7 +180,7 @@ app.post('/adf/preview', requireAuth, (req, res) => {
 });
 app.get('/inventory/status', requireAuth, (_req, res) => {
   const out = {};
-  for (const d of allDealers()) { const s = getSnapshot(d.dealer_id); out[d.dealer_id] = { count: s.vehicles.length, refreshed_at: s.refreshed_at, error: s.error, diagnostics: s.diagnostics }; }
+  for (const d of allDealers()) { const s = getSnapshot(d.dealer_id); out[d.dealer_id] = { count: s.vehicles.length, refreshed_at: s.refreshed_at, error: s.error, direct_sources: knownSources(d.dealer_id) || d.direct_sources || null, diagnostics: s.diagnostics }; }
   res.json(out);
 });
 app.post('/inventory/refresh', requireAuth, async (req, res) => {
