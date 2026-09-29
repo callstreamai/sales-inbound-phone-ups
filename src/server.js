@@ -4,7 +4,7 @@ import morgan from 'morgan';
 import { z } from 'zod';
 import { findDealer, allDealers, salesStatus } from './dealers.js';
 import { getSnapshot, refreshDealer, refreshAll, startScheduler, cacheSummary, loadSeed, knownSources } from './inventory/cache.js';
-import { searchVehicles, facets, detectModel } from './inventory/search.js';
+import { searchVehicles, facets, detectModel, findByStockOrVin } from './inventory/search.js';
 import { spokenVehicle, spokenResults, spokenPrice } from './inventory/spoken.js';
 import { vinStillListed } from './inventory/liveCheck.js';
 import { buildAdf } from './lead/adf.js';
@@ -52,6 +52,7 @@ const LeadSchema = z.object({
   vehicle_interest_text: optStr,
   has_trade: optBool, trade_year: optNum, trade_make: optStr, trade_model: optStr, trade_description: optStr,
   timeframe: optStr, comments: optStr, consent_recorded: optBool,
+  caller_stock: optStr, caller_price_quoted: optStr,
 });
 
 function resolveDealer(req, res) {
@@ -96,7 +97,9 @@ app.post('/inventory/search', requireAuth, (req, res) => {
   if (!snap.vehicles.length) {
     return res.json({ success: false, found: false, status: 'inventory_unavailable', match_count: 0, results_spoken: '', message: 'Inventory has not loaded for this dealer.' });
   }
-  let { matches, relaxed } = searchVehicles(snap.vehicles, q);
+  const stockQueried = Boolean(q.stock || q.vin);
+  const stockHit = stockQueried ? findByStockOrVin(snap.vehicles, q) : null;
+  let { matches, relaxed } = stockHit ? { matches: [stockHit], relaxed: false } : searchVehicles(snap.vehicles, { ...q, stock: '', vin: '' });
   let broadened = '';
   // Nothing matched: drop the narrowest preferences one at a time so the agent can offer the closest units.
   if (!matches.length) {
@@ -110,6 +113,7 @@ app.post('/inventory/search', requireAuth, (req, res) => {
   const modelPool = q.model ? searchVehicles(snap.vehicles, { condition: q.condition, make: q.make, model: q.model }).matches : matches;
   const f = facets(modelPool);
   const payload = {
+    stock_queried: stockQueried, stock_found: Boolean(stockHit), stock_spoken: q.stock ? q.stock.toUpperCase().replace(/[^A-Z0-9]/g, '').split('').join(' ') : '',
     success: true, found: matches.length > 0, status: matches.length ? (relaxed ? 'partial_match' : 'match') : 'no_match', match_count: matches.length, broadened_note: broadened,
     model_total: modelPool.length, results_spoken: spokenResults(top, matches.length, q),
     no_match_spoken: matches.length ? '' : (modelPool.length ? `I don't see one matching everything you asked for, but I do have ${modelPool.length} ${[q.year, q.make, q.model].filter(Boolean).join(' ')} in stock.` : `I'm not seeing that in stock right now.`),
@@ -143,9 +147,11 @@ app.post('/lead/submit', requireAuth, async (req, res) => {
   const status = salesStatus(dealer);
   // Prefer the cached record for the chosen unit so the ADF carries the exact VIN/stock/price.
   const snap = getSnapshot(dealer.dealer_id);
-  const cached = snap.vehicles.find((x) => (b.vehicle_vin && x.vin === b.vehicle_vin.toUpperCase()) || (b.vehicle_stock && x.stock && x.stock.toLowerCase() === b.vehicle_stock.toLowerCase()));
+  const cached = findByStockOrVin(snap.vehicles, { vin: b.vehicle_vin, stock: b.vehicle_stock }) || (b.caller_stock ? findByStockOrVin(snap.vehicles, { stock: b.caller_stock }) : null);
   const vehicle = cached || (b.vehicle_model ? { vin: b.vehicle_vin, stock: b.vehicle_stock, year: b.vehicle_year, make: b.vehicle_make || dealer.brand, model: b.vehicle_model, trim: b.vehicle_trim, condition: /new/i.test(b.vehicle_condition) ? 'new' : b.vehicle_condition ? 'used' : '', exterior_color: b.vehicle_color, price: b.vehicle_price, price_type: 'listed' } : null);
-  const commentParts = [b.comments, b.vehicle_interest_text && !cached ? `Vehicle of interest (caller's words): ${b.vehicle_interest_text}` : '', b.consent_recorded ? 'Caller consented to call recording.' : ''].filter(Boolean).join('\n');
+  const commentParts = [b.comments,
+    b.caller_stock ? `Caller asked about stock number ${b.caller_stock.toUpperCase()}${cached ? '' : ' (not matched to the website inventory snapshot; please confirm)'}.` : '',
+    b.caller_price_quoted ? `Caller referenced a price of ${b.caller_price_quoted} from the website.` : '', b.vehicle_interest_text && !cached ? `Vehicle of interest (caller's words): ${b.vehicle_interest_text}` : '', b.consent_recorded ? 'Caller consented to call recording.' : ''].filter(Boolean).join('\n');
   const xml = buildAdf({ dealer, customer: { name: b.customer_name, phone, email: b.customer_email }, vehicle, comments: commentParts, trade: { has_trade: b.has_trade, year: b.trade_year, make: b.trade_make, model: b.trade_model, description: b.trade_description }, timeframe: b.timeframe, call_id: b.call_id });
 
   const vehicleLabel = vehicle ? [vehicle.year, vehicle.make, vehicle.model, vehicle.trim].filter(Boolean).join(' ') : 'general sales inquiry';

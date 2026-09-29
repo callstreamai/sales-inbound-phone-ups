@@ -34,6 +34,21 @@ export function detectModel(text) {
   return '';
 }
 
+const clean = (x) => String(x || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+export function stockMatches(v, stock) {
+  const want = clean(stock);
+  if (want.length < 4) return false;
+  const pool = [v.stock, ...(v.stock_alts || []), ...(v.ids || [])].map(clean).filter(Boolean);
+  if (pool.includes(want)) return true;
+  // Callers often read the last 6-8 characters of the VIN as the "stock number".
+  return want.length >= 6 && want.length <= 8 && clean(v.vin).endsWith(want);
+}
+export function findByStockOrVin(vehicles, { stock, vin }) {
+  if (vin && clean(vin).length === 17) { const hit = vehicles.find((v) => v.vin === clean(vin)); if (hit) return hit; }
+  if (stock) return vehicles.find((v) => stockMatches(v, stock)) || null;
+  return null;
+}
+
 export function searchVehicles(vehicles, q) {
   const wantCond = q.condition ? norm(q.condition) : '';
   const wantHybrid = /hybrid|plug|phev|electric|ev\b/.test(norm(q.fuel_type || ''));
@@ -45,7 +60,7 @@ export function searchVehicles(vehicles, q) {
       const ok = wantCond === 'new' ? v.condition === 'new' : wantCond === 'certified' ? v.condition === 'certified' : v.condition !== 'new';
       if (!ok) continue;
     }
-    if (q.stock && squash(v.stock) && squash(q.stock) === squash(v.stock)) score += 100;
+    if (q.stock && stockMatches(v, q.stock)) score += 100;
     if (q.vin && v.vin === String(q.vin).toUpperCase()) score += 100;
     if (q.make) { const m = textMatch(v.make, q.make); if (m < 0) continue; score += m * 2; }
     if (q.model) { const m = modelMatch(v, q.model); if (m < 0) continue; score += m * 10; }

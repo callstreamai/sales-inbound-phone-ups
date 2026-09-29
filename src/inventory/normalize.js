@@ -95,6 +95,13 @@ function conditionOf(f, fallback) {
   return fallback || 'unknown';
 }
 
+// Dealer stock numbers usually start with letters (TW552619); order/port numbers usually start with digits.
+function preferDealerStock(primary, alts) {
+  const dealerLike = (x) => /^[A-Z]{1,4}\d{3,}[A-Z]?$/i.test(x);
+  if (primary && dealerLike(primary)) return primary;
+  return alts.find(dealerLike) || primary;
+}
+
 export function toVehicle(obj, { condition, baseUrl } = {}) {
   const f = flat(obj);
   const vin = Object.entries(f).find(([k, v]) => /vin/.test(k) && VIN_RE.test(str(v)));
@@ -106,9 +113,15 @@ export function toVehicle(obj, { condition, baseUrl } = {}) {
   let url = str(pick(f, FIELDS.url));
   if (url && baseUrl && url.startsWith('/')) url = baseUrl.replace(/\/$/, '') + url;
   const transit = pick(f, FIELDS.in_transit);
+  // Every stock-like value (dealers expose more than one: dealer stock, order number, etc.) plus
+  // short ID-looking strings, so a caller's stock number matches whichever one the site displays.
+  const stockAlts = [...new Set(Object.entries(f).filter(([k, v]) => /stock|stk/.test(k) && !/instock|stockstatus|stocktype|stockimage|stockphoto/.test(k) && typeof v !== 'boolean' && str(v)).map(([, v]) => str(v).toUpperCase()))];
+  const ids = [...new Set(Object.values(f).filter((v) => typeof v === 'string' && /^[A-Z0-9-]{5,12}$/i.test(v.trim()) && /\d/.test(v)).map((v) => v.trim().toUpperCase()))];
   return {
     vin: str(vin[1]).toUpperCase(),
-    stock: str(pick(f, FIELDS.stock)),
+    stock: preferDealerStock(str(pick(f, FIELDS.stock)), stockAlts),
+    stock_alts: stockAlts,
+    ids,
     condition: conditionOf(f, condition),
     year,
     make: str(pick(f, FIELDS.make)),
