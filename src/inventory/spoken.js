@@ -40,10 +40,11 @@ export function spokenDetails(v) {
   const bits = [];
   if (v.interior_color) bits.push(`a ${v.interior_color} interior`);
   if (v.drivetrain) bits.push(/4|four|awd|all/i.test(v.drivetrain) ? v.drivetrain.replace(/^4WD$/i, 'four wheel drive').replace(/^AWD$/i, 'all wheel drive') : v.drivetrain);
-  if (v.engine) bits.push(`the ${v.engine} engine`);
+  if (v.engine) bits.push(/engine/i.test(v.engine) ? `the ${v.engine}` : `the ${v.engine} engine`);
   if (v.transmission) bits.push(`${/auto/i.test(v.transmission) ? 'an automatic' : v.transmission} transmission`);
   let out = bits.length ? `It has ${bits.slice(0, -1).join(', ')}${bits.length > 1 ? ' and ' : ''}${bits[bits.length - 1]}.` : '';
   if (v.features && v.features.length) out += ` Highlights include ${v.features.slice(0, 6).join(', ')}.`;
+  out = out.replace(/[®™©]/g, '');
   if (v.in_transit) out += ' It is currently in transit to the dealership.';
   return out.trim();
 }

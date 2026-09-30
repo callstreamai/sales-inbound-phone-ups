@@ -43,9 +43,12 @@
         "09:00",
         "18:00"
       ],
-      "sun": null
+      "sun": [
+        "12:00",
+        "16:00"
+      ]
     },
-    "hours_verified": false,
+    "hours_verified": true,
     "direct_sources": {
       "new": [
         "https://www.balisetoyotaofwarwick.com/api/vhcliaa/vehicle-pages/cosmos/srp/vehicles/29816/3376849"
@@ -53,6 +56,8 @@
       "used": [
         "https://www.balisetoyotaofwarwick.com/api/vhcliaa/vehicle-pages/cosmos/srp/vehicles/29816/3376864"
       ]
-    }
+    },
+    "collision_phone": "+14017858906",
+    "hours_source": "https://www.balisetoyotaofwarwick.com/aboutus.aspx (checked 2026-09-29)"
   }
 ]
