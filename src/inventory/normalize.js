@@ -102,6 +102,20 @@ function preferDealerStock(primary, alts) {
   return alts.find(dealerLike) || primary;
 }
 
+// Feature/option lists: arrays of strings or {name|label|description} objects under feature-like keys.
+function features(obj, depth = 0, acc = []) {
+  if (!obj || typeof obj !== 'object' || depth > 3 || acc.length >= 40) return acc;
+  for (const [k, v] of Object.entries(obj)) {
+    if (Array.isArray(v) && /feature|option|highlight|package|equipment|amenit/i.test(k)) {
+      for (const x of v) {
+        const t = typeof x === 'string' ? x : x && typeof x === 'object' ? (x.name || x.Name || x.label || x.Label || x.description || x.Description || x.title || x.Title) : '';
+        if (typeof t === 'string' && t.trim().length > 2 && t.length < 80) acc.push(t.trim());
+      }
+    } else if (v && typeof v === 'object' && !Array.isArray(v)) features(v, depth + 1, acc);
+  }
+  return acc;
+}
+
 export function toVehicle(obj, { condition, baseUrl } = {}) {
   const f = flat(obj);
   const vin = Object.entries(f).find(([k, v]) => /vin/.test(k) && VIN_RE.test(str(v)));
@@ -139,6 +153,7 @@ export function toVehicle(obj, { condition, baseUrl } = {}) {
     price,
     price_type,
     url,
+    features: [...new Set(features(obj))].slice(0, 25),
   };
 }
 

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { findDealer, allDealers, salesStatus } from './dealers.js';
 import { getSnapshot, refreshDealer, refreshAll, startScheduler, cacheSummary, loadSeed, knownSources } from './inventory/cache.js';
 import { searchVehicles, facets, detectModel, findByStockOrVin } from './inventory/search.js';
-import { spokenVehicle, spokenResults, spokenPrice } from './inventory/spoken.js';
+import { spokenVehicle, spokenResults, spokenPrice, spokenDetails } from './inventory/spoken.js';
 import { vinStillListed } from './inventory/liveCheck.js';
 import { buildAdf } from './lead/adf.js';
 import { sendAdfEmail } from './lead/resend.js';
@@ -67,6 +67,9 @@ const flatVehicle = (v, prefix) => (v ? {
   [`${prefix}_mileage`]: v.mileage != null ? String(v.mileage) : '', [`${prefix}_price`]: v.price ? String(v.price) : '',
   [`${prefix}_price_spoken`]: v.price ? spokenPrice(v.price) : '', [`${prefix}_price_type`]: v.price_type || '',
   [`${prefix}_in_transit`]: String(Boolean(v.in_transit)), [`${prefix}_url`]: v.url, [`${prefix}_spoken`]: spokenVehicle(v),
+  [`${prefix}_interior`]: v.interior_color || '', [`${prefix}_drivetrain`]: v.drivetrain || '', [`${prefix}_engine`]: v.engine || '',
+  [`${prefix}_transmission`]: v.transmission || '', [`${prefix}_fuel`]: v.fuel || '', [`${prefix}_body`]: v.body || '',
+  [`${prefix}_features`]: (v.features || []).slice(0, 12).join(', '), [`${prefix}_details_spoken`]: spokenDetails(v),
 } : {});
 
 app.get('/', (_req, res) => res.json({ service: SERVICE, ok: true }));
