@@ -40,3 +40,70 @@ test('inventory endpoint separates exact matches and year alternatives', async (
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+
+test('multiple interests preserve groups, fair slots, alternatives and corrections', async () => {
+  const dealer_id = 'balise-toyota-warwick';
+  const base = { year: 2026, make: 'Toyota', model: 'Corolla', condition: 'new', trim: 'LE', price: 25000, price_type: 'msrp', features: [], exterior_color: 'Ice Cap' };
+  loadSeed(dealer_id, [
+    ...[1, 2, 3, 4].map(i => ({ ...base, vin: String(i).repeat(17), stock: 'C' + i })),
+    { ...base, vin: 'R'.repeat(17), stock: 'R001', model: '4Runner', price: 47000 },
+    { ...base, vin: 'X'.repeat(17), stock: 'X1', model: 'Corolla Cross' },
+  ]);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  const search = async body => {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/inventory/search`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dealer_id, ...body }),
+    });
+    return { code: response.status, ...await response.json() };
+  };
+  try {
+    for (const query of [
+      { model: 'Corolla, 4Runner' }, { model: 'Corolla or 4 Runner' },
+      { models: ['Corolla', 'four runner', 'Corollas'] },
+      { vehicle_interest_text: 'Interested in a Corolla and a 4Runner' },
+    ]) {
+      const r = await search({ ...query, condition: 'new', color: 'white' });
+      assert.equal(r.status, 'match');
+      assert.equal(r.multi_model, true);
+      assert.deepEqual(r.requested_models, ['corolla', '4runner']);
+      assert.deepEqual(r.model_results.map(g => g.match_count), [4, 1]);
+      assert.equal(r.match_count, 5);
+      assert.equal(r.vehicle_1_model, 'Corolla');
+      assert.equal(r.vehicle_2_model, '4Runner');
+      assert.equal(r.vehicle_3_model, 'Corolla');
+      assert.match(r.results_spoken, /Corolla.*4Runner/);
+      assert.deepEqual(JSON.parse(r.model_results_json), r.model_results);
+    }
+    const missing = await search({ models: ['Corolla', 'Tacoma'] });
+    assert.equal(missing.status, 'partial_match');
+    assert.equal(missing.model_results[1].status, 'no_match');
+    assert.match(missing.results_spoken, /tacoma.*no matching listings/i);
+    const corrected = await search({ model: '4Runner', vehicle_interest_text: 'Previously wanted Corolla and 4Runner' });
+    assert.equal(corrected.multi_model, false);
+    assert.equal(corrected.vehicle_1_model, '4Runner');
+    assert.equal(corrected.vehicle_2_model, '');
+    assert.equal(corrected.model_results_json, '[]');
+    const specific = await search({ models: ['Corolla', '4Runner'], stock: 'R001' });
+    assert.equal(specific.stock_found, true);
+    assert.equal(specific.match_count, 1);
+    assert.equal(specific.multi_model, false);
+    const separate = await search({ models: ['Corolla Cross', 'Corolla'] });
+    assert.deepEqual(separate.model_results.map(g => g.match_count), [1, 4]);
+    const alternative = await search({ models: ['Corolla', '4Runner'], max_price: 30000 });
+    assert.equal(alternative.status, 'partial_match');
+    assert.equal(alternative.exact_match_count, 4);
+    assert.equal(alternative.alternative_count, 1);
+    assert.match(alternative.results_spoken, /4Runner.*alternative/);
+    assert.match(alternative.relaxed_note, /max_price/);
+    const none = await search({ models: ['Tacoma', 'Tundra'] });
+    assert.equal(none.status, 'no_match');
+    assert.equal(none.vehicle_1_stock, '');
+    assert.equal((await search({ models: Array(9).fill('Corolla') })).code, 400);
+    assert.equal((await search({ models: [42] })).code, 400);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});

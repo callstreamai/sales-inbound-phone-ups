@@ -5,7 +5,7 @@ import morgan from 'morgan';
 import { z } from 'zod';
 import { findDealer, allDealers, salesStatus } from './dealers.js';
 import { getSnapshot, refreshDealer, refreshAll, startScheduler, cacheSummary, loadSeed, knownSources } from './inventory/cache.js';
-import { searchVehicles, facets, detectModel, findByStockOrVin } from './inventory/search.js';
+import { searchVehicles, facets, requestedModels, findByStockOrVin } from './inventory/search.js';
 import { spokenVehicle, spokenResults, spokenPrice, spokenDetails } from './inventory/spoken.js';
 import { vinStillListed } from './inventory/liveCheck.js';
 import { buildAdf } from './lead/adf.js';
@@ -41,6 +41,7 @@ const optBool = z.any().transform((v) => (typeof v === 'boolean' ? v : /^(true|y
 const DealerRef = { dealer_id: optStr, to: optStr, call_id: optStr };
 const SearchSchema = z.object({
   ...DealerRef,
+  models: z.array(z.string().trim().min(1).max(100)).max(8).nullish().transform(v => v || []),
   condition: optStr, year: optNum, make: optStr, model: optStr, trim: optStr, fuel_type: optStr,
   body_style: optStr, color: optStr, max_price: optNum, max_mileage: optNum, stock: optStr, vin: optStr, vehicle_interest_text: optStr,
 });
@@ -95,12 +96,68 @@ app.post('/call/start', requireAuth, (req, res) => {
 app.post('/inventory/search', requireAuth, (req, res) => {
   const dealer = resolveDealer(req, res); if (!dealer) return;
   const q = SearchSchema.parse(req.body || {});
-  if (!q.model && q.vehicle_interest_text) q.model = detectModel(q.vehicle_interest_text);
-  if (q.model && /s$/i.test(q.model) && !/cross|prius/i.test(q.model)) q.model = q.model.replace(/s$/i, '');
   const snap = getSnapshot(dealer.dealer_id);
   if (!snap.vehicles.length) {
     return res.json({ success: false, found: false, status: 'inventory_unavailable', match_count: 0, results_spoken: '', message: 'Inventory has not loaded for this dealer.' });
   }
+  const models = requestedModels(q);
+  if (models.length > 8) return res.status(400).json({ success: false, status: 'bad_request', message: 'At most 8 models may be searched together.' });
+  const stockHit = (q.stock || q.vin) ? findByStockOrVin(snap.vehicles, q) : null;
+  // A caller identifying a specific unit still receives that unit, not a list.
+  let payload;
+  if (models.length <= 1 || stockHit) {
+    payload = searchPayload(snap, { ...q, model: models[0] || '' });
+  } else {
+    const groups = models.map(model => ({ model, ...searchPayload(snap, { ...q, model }) }));
+    // Round-robin the existing three slots; all groups remain available below.
+    const shortlist = [];
+    const seen = new Set();
+    for (let i = 1; i <= 3; i++) {
+      for (const group of groups) {
+        const vin = group[`vehicle_${i}_vin`];
+        const key = vin || group[`vehicle_${i}_stock`];
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        shortlist.push(Object.fromEntries(Object.entries(group)
+          .filter(([k]) => k.startsWith(`vehicle_${i}_`))
+          .map(([k, v]) => [k.slice(`vehicle_${i}_`.length), v])));
+      }
+    }
+    const slots = {};
+    for (const [i, prefix] of [[0, 'vehicle'], [0, 'vehicle_1'], [1, 'vehicle_2'], [2, 'vehicle_3']]) {
+      for (const key of Object.keys(flatVehicle(null, prefix))) {
+        slots[key] = shortlist[i]?.[key.slice(prefix.length + 1)] ?? '';
+      }
+    }
+    const sum = key => groups.reduce((n, g) => n + g[key], 0);
+    const exact = sum('exact_match_count'), alternatives = sum('alternative_count');
+    const summary = groups.map(g => {
+      const label = g.vehicle_model || g.model;
+      if (!g.found) return `For ${label}, I found no matching listings.`;
+      return `For ${label}, I found ${g.match_count} ${g.status === 'match' ? 'matching' : 'alternative'} listings.`;
+    }).join(' ');
+    payload = {
+      ...searchPayload({ ...snap, vehicles: [] }, q), ...slots,
+      found: groups.some(g => g.found),
+      status: groups.every(g => g.status === 'match') ? 'match' : groups.some(g => g.found) ? 'partial_match' : 'no_match',
+      match_count: sum('match_count'), exact_match_count: exact, alternative_count: alternatives,
+      model_total: sum('model_total'), multi_model: true, requested_models: models,
+      model_results: groups, model_results_json: JSON.stringify(groups),
+      results_spoken: summary + (groups.some(g => g.found) ? ' Which model would you like to review first?' : ''),
+      no_match_spoken: groups.some(g => g.found) ? '' : summary,
+      relaxed_note: groups.filter(g => g.status !== 'match').map(g => `${g.model}: ${g.relaxed_note || g.no_match_spoken}`).join(' '),
+      broadened_note: groups.filter(g => g.broadened_note).map(g => `${g.model}: ${g.broadened_note}`).join(' '),
+    };
+  }
+  payload.multi_model ??= false;
+  payload.requested_models ??= models;
+  payload.model_results ??= [];
+  payload.model_results_json ??= '[]';
+  console.log(JSON.stringify({ event: 'inventory_search', dealer_id: dealer.dealer_id, call_id: q.call_id || null, q: { condition: q.condition, year: q.year, make: q.make, models, trim: q.trim }, matches: payload.match_count, status: payload.status }));
+  res.json(payload);
+});
+
+function searchPayload(snap, q) {
   const stockQueried = Boolean(q.stock || q.vin);
   const stockHit = stockQueried ? findByStockOrVin(snap.vehicles, q) : null;
   let { matches, relaxed, notes = [] } = stockHit ? { matches: [stockHit], relaxed: false } : searchVehicles(snap.vehicles, { ...q, stock: '', vin: '' });
@@ -116,7 +173,7 @@ app.post('/inventory/search', requireAuth, (req, res) => {
   const top = matches.slice(0, 3);
   const modelPool = q.model ? searchVehicles(snap.vehicles, { condition: q.condition, make: q.make, model: q.model }).matches : matches;
   const f = facets(modelPool);
-  const payload = {
+  return {
     stock_queried: stockQueried, stock_found: Boolean(stockHit), stock_spoken: q.stock ? q.stock.toUpperCase().replace(/[^A-Z0-9]/g, '').split('').join(' ') : '',
     success: true, found: matches.length > 0, status: matches.length ? (relaxed ? 'partial_match' : 'match') : 'no_match', match_count: matches.length, exact_match_count: relaxed ? 0 : matches.length, alternative_count: relaxed ? matches.length : 0, broadened_note: broadened,
     model_total: modelPool.length, results_spoken: spokenResults(top, matches.length, q, { relaxed }),
@@ -126,9 +183,8 @@ app.post('/inventory/search', requireAuth, (req, res) => {
     price_low_spoken: f.price_low ? spokenPrice(f.price_low) : '', price_high_spoken: f.price_high ? spokenPrice(f.price_high) : '',
     inventory_as_of: snap.refreshed_at, ...flatVehicle(top[0], 'vehicle'), ...flatVehicle(top[0], 'vehicle_1'), ...flatVehicle(top[1], 'vehicle_2'), ...flatVehicle(top[2], 'vehicle_3'),
   };
-  console.log(JSON.stringify({ event: 'inventory_search', dealer_id: dealer.dealer_id, call_id: q.call_id || null, q: { condition: q.condition, year: q.year, make: q.make, model: q.model, trim: q.trim }, matches: matches.length, status: payload.status }));
-  res.json(payload);
-});
+}
+
 
 // One specific unit, checked live against the dealer site.
 app.post('/inventory/vehicle', requireAuth, async (req, res) => {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { searchVehicles, facets } from '../src/inventory/search.js';
+import { searchVehicles, facets, detectModels, requestedModels } from '../src/inventory/search.js';
 import { spokenResults } from '../src/inventory/spoken.js';
 
 const inv = [
@@ -85,4 +85,14 @@ test('year fallback is explicitly an alternative and never announced as requeste
 test('a 4Runner search cannot return Corolla inventory', () => {
   const r = searchVehicles([{ ...inv[1], model: 'Corolla' }, { ...inv[1], model: '4Runner', stock: 'runner' }], { model: 'four runner' });
   assert.deepEqual(r.matches.map(v => v.stock), ['runner']);
+});
+
+
+test('model interests preserve order and distinct Toyota names', () => {
+  assert.deepEqual(detectModels('Corolla Cross or Corolla, then a four runner'), ['corolla cross', 'corolla', '4runner']);
+  assert.deepEqual(detectModels('GR Corolla and Corolla Hybrid'), ['gr corolla', 'corolla hybrid']);
+  assert.deepEqual(requestedModels({ model: 'Tacoma TRD Off Road' }), ['tacoma trd off road']);
+  assert.deepEqual(requestedModels({ model: 'Corolla/4Runner' }), ['corolla', '4runner']);
+  assert.deepEqual(requestedModels({ model: 'Corolla 4Runner' }), ['corolla', '4runner']);
+  assert.deepEqual(requestedModels({ models: ['Civic', 'Accord'] }), ['civic', 'accord']);
 });

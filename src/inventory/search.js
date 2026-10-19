@@ -5,7 +5,7 @@ import { cleanInventoryText } from './text.js';
 
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const squash = (s) => norm(s).replace(/\s+/g, '');
-const SPOKEN = [[/\brav ?four\b/g, 'rav4'], [/\bfour ?runner\b/g, '4runner'], [/\bc ?h ?r\b/g, 'chr'], [/\bb ?z ?4 ?x\b/g, 'bz4x'], [/\bt ?r ?d\b/g, 'trd'], [/\bx ?s ?e\b/g, 'xse'], [/\bx ?l ?e\b/g, 'xle'], [/\bs ?r ?5\b/g, 'sr5'], [/\bg ?r\b/g, 'gr']];
+const SPOKEN = [[/\brav ?four\b/g, 'rav4'], [/\b(?:four ?runner|4 runner)\b/g, '4runner'], [/\bc ?h ?r\b/g, 'chr'], [/\bb ?z ?4 ?x\b/g, 'bz4x'], [/\bt ?r ?d\b/g, 'trd'], [/\bx ?s ?e\b/g, 'xse'], [/\bx ?l ?e\b/g, 'xle'], [/\bs ?r ?5\b/g, 'sr5'], [/\bg ?r\b/g, 'gr']];
 function spoken(s) { let t = norm(s); for (const [re, rep] of SPOKEN) t = t.replace(re, rep); return t; }
 
 function modelMatch(v, want) {
@@ -37,6 +37,37 @@ export function detectModel(text) {
   const t = ' ' + spoken(text) + ' ';
   for (const m of MODELS) { const re = new RegExp('\\b' + m.replace(/ /g, ' ?') + 's?\\b'); if (re.test(t)) return m; }
   return '';
+}
+
+// Collect non-overlapping model names in caller order. Long names claim their
+// span first, so Corolla Cross does not also become a Corolla interest.
+export function detectModels(text) {
+  let remaining = spoken(text);
+  const hits = [];
+  for (const model of MODELS) {
+    const re = new RegExp('\\b' + model.replace(/ /g, ' ?') + 's?\\b', 'g');
+    remaining = remaining.replace(re, (match, index) => {
+      hits.push({ model, index });
+      return ' '.repeat(match.length);
+    });
+  }
+  return [...new Set(hits.sort((a, b) => a.index - b.index).map(h => h.model))];
+}
+
+export function requestedModels(q) {
+  // Explicit fields take precedence over narrative history, which can contain
+  // a model the caller has already rejected or replaced.
+  const explicit = q.models?.length ? q.models : q.model ? [q.model] : [];
+  if (!explicit.length) return detectModels(q.vehicle_interest_text || '');
+  return [...new Set(explicit.flatMap(value => {
+    const parts = value.split(/[,;/&]|\b(?:and|or)\b/i).map(s => s.trim()).filter(Boolean);
+    return parts.flatMap(part => {
+      const known = detectModels(part);
+      if (known.length > 1) return known;
+      if (known.length === 1 && new RegExp('^' + known[0].replace(/ /g, ' ?') + 's?$').test(spoken(part))) return known;
+      return [spoken(part)];
+    });
+  }))];
 }
 
 const clean = (x) => String(x || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
