@@ -1,3 +1,4 @@
+import { cleanInventoryText } from './inventory/text.js';
 import express from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -63,14 +64,14 @@ function resolveDealer(req, res) {
 
 const flatVehicle = (v, prefix) => (v ? {
   [`${prefix}_vin`]: v.vin, [`${prefix}_stock`]: v.stock, [`${prefix}_year`]: String(v.year), [`${prefix}_make`]: v.make,
-  [`${prefix}_model`]: v.model, [`${prefix}_trim`]: v.trim, [`${prefix}_condition`]: v.condition, [`${prefix}_color`]: v.exterior_color,
+  [`${prefix}_model`]: v.model, [`${prefix}_trim`]: v.trim, [`${prefix}_condition`]: v.condition, [`${prefix}_color`]: cleanInventoryText(v.exterior_color),
   [`${prefix}_mileage`]: v.mileage != null ? String(v.mileage) : '', [`${prefix}_price`]: v.price ? String(v.price) : '',
   [`${prefix}_price_spoken`]: v.price ? spokenPrice(v.price) : '', [`${prefix}_price_type`]: v.price_type || '',
-  [`${prefix}_in_transit`]: String(Boolean(v.in_transit)), [`${prefix}_url`]: v.url, [`${prefix}_spoken`]: spokenVehicle(v),
+  [`${prefix}_in_transit`]: String(Boolean(v.in_transit)), [`${prefix}_in_production`]: String(Boolean(v.in_production)), [`${prefix}_url`]: v.url, [`${prefix}_spoken`]: spokenVehicle(v),
   [`${prefix}_interior`]: v.interior_color || '', [`${prefix}_drivetrain`]: v.drivetrain || '', [`${prefix}_engine`]: v.engine || '',
   [`${prefix}_transmission`]: v.transmission || '', [`${prefix}_fuel`]: v.fuel || '', [`${prefix}_body`]: v.body || '',
   [`${prefix}_features`]: (v.features || []).slice(0, 12).join(', '), [`${prefix}_details_spoken`]: spokenDetails(v),
-} : {});
+} : Object.fromEntries(['vin','stock','year','make','model','trim','condition','color','mileage','price','price_spoken','price_type','in_transit','in_production','url','spoken','interior','drivetrain','engine','transmission','fuel','body','features','details_spoken'].map(field => [`${prefix}_${field}`, ''])));
 
 app.get('/', (_req, res) => res.json({ service: SERVICE, ok: true }));
 app.get('/health', (_req, res) => res.json({
@@ -102,14 +103,14 @@ app.post('/inventory/search', requireAuth, (req, res) => {
   }
   const stockQueried = Boolean(q.stock || q.vin);
   const stockHit = stockQueried ? findByStockOrVin(snap.vehicles, q) : null;
-  let { matches, relaxed } = stockHit ? { matches: [stockHit], relaxed: false } : searchVehicles(snap.vehicles, { ...q, stock: '', vin: '' });
+  let { matches, relaxed, notes = [] } = stockHit ? { matches: [stockHit], relaxed: false } : searchVehicles(snap.vehicles, { ...q, stock: '', vin: '' });
   let broadened = '';
   // Nothing matched: drop the narrowest preferences one at a time so the agent can offer the closest units.
   if (!matches.length) {
     for (const drop of [['trim'], ['trim', 'color'], ['trim', 'color', 'year'], ['trim', 'color', 'year', 'max_price'], ['trim', 'color', 'year', 'max_price', 'condition']]) {
       const q2 = { ...q }; for (const k of drop) q2[k] = k === 'year' || k === 'max_price' ? null : '';
       const r = searchVehicles(snap.vehicles, q2);
-      if (r.matches.length) { matches = r.matches; relaxed = true; broadened = `Nothing matched exactly; closest units shown after ignoring ${drop.join(', ')}.`; break; }
+      if (r.matches.length) { matches = r.matches; notes = r.notes; relaxed = true; broadened = `Nothing matched exactly; closest units shown after ignoring ${drop.join(', ')}.`; break; }
     }
   }
   const top = matches.slice(0, 3);
@@ -117,10 +118,10 @@ app.post('/inventory/search', requireAuth, (req, res) => {
   const f = facets(modelPool);
   const payload = {
     stock_queried: stockQueried, stock_found: Boolean(stockHit), stock_spoken: q.stock ? q.stock.toUpperCase().replace(/[^A-Z0-9]/g, '').split('').join(' ') : '',
-    success: true, found: matches.length > 0, status: matches.length ? (relaxed ? 'partial_match' : 'match') : 'no_match', match_count: matches.length, broadened_note: broadened,
-    model_total: modelPool.length, results_spoken: spokenResults(top, matches.length, q),
-    no_match_spoken: matches.length ? '' : (modelPool.length ? `I don't see one matching everything you asked for, but I do have ${modelPool.length} ${[q.year, q.make, q.model].filter(Boolean).join(' ')} in stock.` : `I'm not seeing that in stock right now.`),
-    relaxed_note: broadened || (relaxed ? 'Closest matches shown; some preferences (trim, color, or budget) were not met exactly.' : ''),
+    success: true, found: matches.length > 0, status: matches.length ? (relaxed ? 'partial_match' : 'match') : 'no_match', match_count: matches.length, exact_match_count: relaxed ? 0 : matches.length, alternative_count: relaxed ? matches.length : 0, broadened_note: broadened,
+    model_total: modelPool.length, results_spoken: spokenResults(top, matches.length, q, { relaxed }),
+    no_match_spoken: matches.length ? '' : (modelPool.length ? `I don't see one matching everything you asked for, but I do have ${modelPool.length} ${[q.make, q.model].filter(Boolean).join(' ')} listings.` : `I'm not seeing that in stock right now.`),
+    relaxed_note: broadened || (relaxed ? `These are alternatives, not exact matches. Unmet requirements: ${[...new Set(notes.flat())].map(n => ({ color_miss: 'exterior color', year_near: 'model year', trim_miss: 'trim', fuel_miss: 'fuel type', body_miss: 'body style', slightly_over_budget: 'budget' }[n] || n)).join(', ')}.` : ''),
     available_trims: f.trims.join(', '), available_colors: f.colors.join(', '), available_years: f.years.join(', '),
     price_low_spoken: f.price_low ? spokenPrice(f.price_low) : '', price_high_spoken: f.price_high ? spokenPrice(f.price_high) : '',
     inventory_as_of: snap.refreshed_at, ...flatVehicle(top[0], 'vehicle'), ...flatVehicle(top[0], 'vehicle_1'), ...flatVehicle(top[1], 'vehicle_2'), ...flatVehicle(top[2], 'vehicle_3'),

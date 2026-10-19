@@ -41,3 +41,10 @@ test('extracts Dealer.com-shaped payload', () => {
 test('ignores objects without a real VIN', () => {
   assert.equal(extractVehicles({ vin: 'NOT-A-VIN', year: 2024, model: 'X' }).length, 0);
 });
+
+ test('preserves boolean availability and cleans dealer color disclosures', () => {
+  const rows = extractVehicles({ VehicleVin: '5YFB4MDE0VP524031', VehicleYear: 2027, VehicleModel: 'Corolla', VehicleMake: 'Toyota', VehicleInTransit: true, VehicleInProduction: false, ExteriorColorLabel: 'Wind Chill Pearl <a href="x"><sup>17</sup></a>' });
+  assert.equal(rows[0].in_transit, true);
+  assert.equal(rows[0].in_production, false);
+  assert.equal(rows[0].exterior_color, 'Wind Chill Pearl');
+});

@@ -1,3 +1,4 @@
+import { cleanInventoryText } from './text.js';
 // Spoken-form helpers. Everything here is read aloud by the voice agent, so keep it short
 // and avoid symbols the TTS might read oddly.
 
@@ -16,21 +17,22 @@ export function cleanTrim(model, trim) {
 export function spokenVehicle(v, { withPrice = true, withStock = false } = {}) {
   const t = cleanTrim(v.model, v.trim);
   const parts = [`a ${v.year} ${v.make} ${v.model}${t ? ' ' + t : ''}`.trim()];
-  if (v.exterior_color) parts.push(`in ${v.exterior_color}`);
+  if (v.exterior_color) parts.push(`in ${cleanInventoryText(v.exterior_color)}`);
   if (v.condition !== 'new' && v.mileage) parts.push(`with ${Math.round(v.mileage).toLocaleString('en-US')} miles`);
   if (withPrice && v.price) parts.push(v.price_type === 'msrp' ? `with an M S R P of ${spokenPrice(v.price)}` : `listed at ${spokenPrice(v.price)}`);
-  if (v.in_transit) parts.push('which is in transit to the dealership');
+  if (v.in_production) parts.push('which is in production, not yet at the dealership');
+  else if (v.in_transit) parts.push('which is in transit to the dealership');
   if (withStock && v.stock) parts.push(`stock number ${v.stock.split('').join(' ')}`);
   return parts.join(', ');
 }
 
-export function spokenResults(matches, total, q) {
+export function spokenResults(matches, total, q, { relaxed = false } = {}) {
   if (!matches.length) return '';
   const top = matches.slice(0, 3);
   const m = matches[0];
-  const what = [q.year, q.make ? m.make : '', q.model ? m.model : '', q.trim && matches.every((v) => v.trim === m.trim) ? m.trim : ''].filter(Boolean).join(' ') || 'that';
+  const what = [!relaxed && q.year && matches.every((v) => v.year === Number(q.year)) ? m.year : '', q.make ? m.make : '', q.model ? m.model : '', !relaxed && q.trim && matches.every((v) => v.trim === m.trim) ? m.trim : ''].filter(Boolean).join(' ') || 'that';
   const plural = /[sxz]$/i.test(what) ? what : what + 's';
-  const lead = total === 1 ? `I found one ${what} in stock:` : `I found ${total} ${plural}${total > 3 ? ', here are three of them' : ''}:`;
+  const lead = relaxed ? `I found ${total} alternative vehicle${total === 1 ? '' : 's'} that do not meet all your requirements:` : total === 1 ? `I found one ${what} listed:` : `I found ${total} ${plural}${total > 3 ? ', here are three of them' : ''}:`;
   const list = top.map((v, i) => `${['First', 'Second', 'Third'][i]}, ${spokenVehicle(v)}`).join('. ');
   return `${lead} ${list}.`;
 }
@@ -45,6 +47,7 @@ export function spokenDetails(v) {
   let out = bits.length ? `It has ${bits.slice(0, -1).join(', ')}${bits.length > 1 ? ' and ' : ''}${bits[bits.length - 1]}.` : '';
   if (v.features && v.features.length) out += ` Highlights include ${v.features.slice(0, 6).join(', ')}.`;
   out = out.replace(/[®™©]/g, '');
-  if (v.in_transit) out += ' It is currently in transit to the dealership.';
+  if (v.in_production) out += ' It is in production, not yet at the dealership.';
+  else if (v.in_transit) out += ' It is currently in transit to the dealership.';
   return out.trim();
 }

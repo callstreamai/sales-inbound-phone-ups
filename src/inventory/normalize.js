@@ -1,3 +1,4 @@
+import { cleanInventoryText } from './text.js';
 // Turns whatever JSON a dealer website loads into one common vehicle shape.
 // Platform-agnostic on purpose: it walks the payload looking for objects that carry a
 // valid 17-character VIN, then maps nearby fields by name. That survives the small field
@@ -22,7 +23,8 @@ const FIELDS = {
   url: [/(vdp|detail)(url|link|page)$/, /^link$/, /^url$/, /vehicle(url|link)$/],
   condition: [/^(vehicle)?(condition|type|inventorytype|newused|status)$/],
   certified: [/certified/, /^cpo$/],
-  in_transit: [/intransit/, /^transit/],
+  in_transit: [/^(vehicle)?intransit$/, /^transit$/],
+  in_production: [/^(vehicle)?inproduction$/],
 };
 // Order matters: the first price type found wins.
 const PRICE_PREF = [/internet|sale|selling|final|dealer|our|special|dprice|asking/, /^price$|retail(price)?$|^displayprice/, /msrp|tsrp|srp|list/];
@@ -85,8 +87,13 @@ function bestPrice(obj) {
   return { price: null, price_type: null };
 }
 
+function pickFlag(f, patterns) {
+  for (const re of patterns) for (const [k, v] of Object.entries(f)) if (re.test(k) && v != null) return v;
+  return null;
+}
+
 function conditionOf(f, fallback) {
-  const cert = pick(f, FIELDS.certified);
+  const cert = pickFlag(f, FIELDS.certified);
   if (cert === true || /^(true|yes|1|y)$/i.test(str(cert))) return 'certified';
   const c = str(pick(f, FIELDS.condition)).toLowerCase();
   if (/certif|cpo/.test(c)) return 'certified';
@@ -126,7 +133,8 @@ export function toVehicle(obj, { condition, baseUrl } = {}) {
   const { price, price_type } = bestPrice(obj);
   let url = str(pick(f, FIELDS.url));
   if (url && baseUrl && url.startsWith('/')) url = baseUrl.replace(/\/$/, '') + url;
-  const transit = pick(f, FIELDS.in_transit);
+  const transit = pickFlag(f, FIELDS.in_transit);
+  const production = pickFlag(f, FIELDS.in_production);
   // Every stock-like value (dealers expose more than one: dealer stock, order number, etc.) plus
   // short ID-looking strings, so a caller's stock number matches whichever one the site displays.
   const stockAlts = [...new Set(Object.entries(f).filter(([k, v]) => /stock|stk/.test(k) && !/instock|stockstatus|stocktype|stockimage|stockphoto/.test(k) && typeof v !== 'boolean' && str(v)).map(([, v]) => str(v).toUpperCase()))];
@@ -142,13 +150,14 @@ export function toVehicle(obj, { condition, baseUrl } = {}) {
     model,
     trim: str(pick(f, FIELDS.trim)),
     body: str(pick(f, FIELDS.body)),
-    exterior_color: str(pick(f, FIELDS.exterior_color)),
+    exterior_color: cleanInventoryText(pick(f, FIELDS.exterior_color)),
     interior_color: str(pick(f, FIELDS.interior_color)),
     mileage: number(pick(f, FIELDS.mileage)),
     fuel: str(pick(f, FIELDS.fuel)),
     drivetrain: str(pick(f, FIELDS.drivetrain)),
     engine: str(pick(f, FIELDS.engine)),
     transmission: str(pick(f, FIELDS.transmission)),
+    in_production: production === true || /^(true|yes|1)$/i.test(str(production)),
     in_transit: transit === true || /^(true|yes|1)$/i.test(str(transit)),
     price,
     price_type,
