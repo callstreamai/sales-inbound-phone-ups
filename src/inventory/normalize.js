@@ -27,7 +27,7 @@ const FIELDS = {
   in_production: [/^(vehicle)?inproduction$/],
 };
 // Order matters: the first price type found wins.
-const PRICE_PREF = [/internet|sale|selling|final|dealer|our|special|dprice|asking/, /^price$|retail(price)?$|^displayprice/, /msrp|tsrp|srp|list/];
+const PRICE_PREF = [/internet/, /sale|selling|final|dealer|our|special|dprice|asking/, /^price$|retail(price)?$|^displayprice/, /msrp|tsrp|srp|list/];
 
 function number(v) {
   if (v == null) return null;
@@ -62,6 +62,23 @@ function pick(f, patterns) {
   return null;
 }
 
+// DealerOn DOM records carry advertised pricing in an encoded price library.
+// Decode only public retail labels; invoice/reference values are never candidates.
+function libraryPrices(value) {
+  if (typeof value !== 'string' || value.length > 32768 || !/^[A-Za-z0-9+/=\s]+$/.test(value)) return [];
+  const text = Buffer.from(value, 'base64').toString('utf8');
+  const out = [];
+  for (const entry of text.split(';')) {
+    const i = entry.lastIndexOf(':');
+    if (i < 0) continue;
+    const key = entry.slice(0, i).trim().toLowerCase().replace(/^calc[_ ]+/, '');
+    if (!/^(internet(?: price)?|selling price|sale price|final price|asking price|msrp|tsrp)$/.test(key)) continue;
+    const n = number(entry.slice(i + 1));
+    if (n && n >= 1000 && n < 1000000) out.push({ key, n });
+  }
+  return out;
+}
+
 // Collect every price-looking pair reachable from a vehicle object (bounded depth).
 function prices(obj, depth = 0, acc = []) {
   if (!obj || typeof obj !== 'object' || depth > 3) return acc;
@@ -69,6 +86,7 @@ function prices(obj, depth = 0, acc = []) {
   const label = str(obj.label || obj.Label || obj.name || obj.Name || obj.type || obj.Type).toLowerCase();
   for (const [k, v] of Object.entries(obj)) {
     const key = k.toLowerCase();
+    if (/^(?:vehicle)?pricelib(?:rary)?$/.test(key)) { acc.push(...libraryPrices(v)); continue; }
     if (v && typeof v === 'object') { prices(v, depth + 1, acc); continue; }
     if (!/price|msrp|srp|value|amount/.test(key)) continue;
     if (/payment|monthly|lease|apr|rate|term|saving|discount|rebate|incentive|fee|tax/.test(key + ' ' + label)) continue;
@@ -78,9 +96,10 @@ function prices(obj, depth = 0, acc = []) {
   return acc;
 }
 
-function bestPrice(obj) {
+function bestPrice(obj, condition) {
   const all = prices(obj);
   for (const re of PRICE_PREF) {
+    if (condition !== 'new' && /msrp/.test(re.source)) continue;
     const hit = all.find((p) => re.test(p.key));
     if (hit) return { price: hit.n, price_type: /msrp|tsrp|srp|list/.test(hit.key) ? 'msrp' : 'listed' };
   }
@@ -130,7 +149,8 @@ export function toVehicle(obj, { condition, baseUrl } = {}) {
   const year = number(pick(f, FIELDS.year));
   const model = str(pick(f, FIELDS.model));
   if (!year || year < 1980 || year > 2100 || !model) return null;
-  const { price, price_type } = bestPrice(obj);
+  const resolvedCondition = conditionOf(f, condition);
+  const { price, price_type } = bestPrice(obj, resolvedCondition);
   let url = str(pick(f, FIELDS.url));
   if (url && baseUrl && url.startsWith('/')) url = baseUrl.replace(/\/$/, '') + url;
   const transit = pickFlag(f, FIELDS.in_transit);
@@ -144,7 +164,7 @@ export function toVehicle(obj, { condition, baseUrl } = {}) {
     stock: preferDealerStock(str(pick(f, FIELDS.stock)), stockAlts),
     stock_alts: stockAlts,
     ids,
-    condition: conditionOf(f, condition),
+    condition: resolvedCondition,
     year,
     make: str(pick(f, FIELDS.make)),
     model,

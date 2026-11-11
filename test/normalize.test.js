@@ -48,3 +48,32 @@ test('ignores objects without a real VIN', () => {
   assert.equal(rows[0].in_production, false);
   assert.equal(rows[0].exterior_color, 'Wind Chill Pearl');
 });
+
+test('uses actual DealerOn advertised prices for all three budget RAV4s', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const raw = JSON.parse(await readFile(new URL('./fixtures/balise-used-pricing.json', import.meta.url), 'utf8'));
+  const vehicles = extractVehicles(raw, { condition: 'used' });
+  const prices = Object.fromEntries(vehicles.map(v => [v.vin, v.price]));
+  assert.deepEqual(prices, { JTMRFREV2HD207976: 21245, '2T3G1RFV1LC124511': 23670, JTMP1RFV7KD033754: 22670 });
+  assert.ok(vehicles.every(v => v.price_type === 'listed'));
+  const { searchVehicles } = await import('../src/inventory/search.js');
+  assert.equal(searchVehicles(vehicles, { condition: 'used', model: 'RAV4', max_price: 25000 }).matches.length, 3);
+});
+
+test('does not treat original MSRP or invoice as a used selling price', () => {
+  const base = { vin: 'JTMRFREV2HD207976', year: 2017, make: 'Toyota', model: 'RAV4', condition: 'used', msrp: 28903 };
+  const lib = Buffer.from('MSRP:28903;Invoice Price:16570;reff_Flat Low Price:20825').toString('base64');
+  const [used] = extractVehicles({ ...base, pricelib: lib });
+  assert.equal(used.price, null);
+  assert.equal(used.price_type, null);
+  const [fresh] = extractVehicles({ ...base, condition: 'new' });
+  assert.equal(fresh.price, 28903);
+  assert.equal(fresh.price_type, 'msrp');
+});
+
+
+test('an unknown used selling price cannot count as a budget match', async () => {
+  const { searchVehicles } = await import('../src/inventory/search.js');
+  const rows = extractVehicles({ vin: 'JTMRFREV2HD207976', year: 2017, make: 'Toyota', model: 'RAV4', condition: 'used', msrp: 28903 });
+  assert.equal(searchVehicles(rows, { condition: 'used', model: 'RAV4', max_price: 25000 }).matches.length, 0);
+});

@@ -105,6 +105,7 @@ export function searchVehicles(vehicles, q) {
     if (q.fuel_type) { const hay = norm(`${v.fuel} ${v.model} ${v.trim} ${v.engine}`); const isHybrid = /hybrid|plug|phev|electric|\bev\b|i force max/.test(hay); if (wantHybrid ? isHybrid : true) score += wantHybrid ? 6 : 0; else notes.push('fuel_miss'); }
     if (q.body_style) { const m = textMatch(`${v.body} ${v.model}`, q.body_style); if (m > 0) score += 3; else if (m < 0) notes.push('body_miss'); }
     if (q.color) { const m = colorMatches(v.exterior_color, q.color, v.make) ? 1 : -1; if (m > 0) score += 4; else notes.push('color_miss'); }
+    if (q.max_price && !v.price) continue; // Unknown selling price cannot establish a budget match.
     if (q.max_price && v.price) { if (v.price <= Number(q.max_price)) score += 3; else if (v.price <= Number(q.max_price) * 1.08) { score -= 2; notes.push('slightly_over_budget'); } else continue; }
     if (q.max_mileage && v.mileage != null && v.mileage > Number(q.max_mileage)) continue;
     if (v.in_transit) score -= 1;
