@@ -1,0 +1,47 @@
+[
+  {
+    "vin": "JTMRFREV2HD207976",
+    "make": "Toyota",
+    "model": "RAV4",
+    "year": "2017",
+    "trim": "XLE",
+    "extcolor": "Magnetic Gray Metallic",
+    "price": "0",
+    "vehicletype": "used",
+    "bodystyle": "Sport Utility",
+    "msrp": "28903",
+    "stocknum": "TW552720XB",
+    "pricelib": "TVNSUDoyODkwMy4wO1NlbGxpbmcgUHJpY2U6MjA4MjUuMDtjYWxjX0lOVEVSTkVUIFBSSUNFOjIxMjQ1LjA=",
+    "odometer": "40767"
+  },
+  {
+    "vin": "2T3G1RFV1LC124511",
+    "make": "Toyota",
+    "model": "RAV4",
+    "year": "2020",
+    "trim": "LE",
+    "extcolor": "Magnetic Gray Metallic",
+    "price": "0",
+    "vehicletype": "used",
+    "bodystyle": "Sport Utility",
+    "msrp": "29768",
+    "stocknum": "70N00033A",
+    "pricelib": "TVNSUDoyOTc2OC4wO1NlbGxpbmcgUHJpY2U6MjMyNTAuMDtjYWxjX0lOVEVSTkVUIFBSSUNFOjIzNjcwLjA=",
+    "odometer": "61930"
+  },
+  {
+    "vin": "JTMP1RFV7KD033754",
+    "make": "Toyota",
+    "model": "RAV4",
+    "year": "2019",
+    "trim": "XLE",
+    "extcolor": "Magnetic Gray Metallic",
+    "price": "0",
+    "vehicletype": "used",
+    "bodystyle": "Sport Utility",
+    "msrp": "31574",
+    "stocknum": "TW552831B",
+    "pricelib": "TVNSUDozMTU3NC4wO1NlbGxpbmcgUHJpY2U6MjIyNTAuMDtjYWxjX0lOVEVSTkVUIFBSSUNFOjIyNjcwLjA=",
+    "odometer": "92475"
+  }
+]

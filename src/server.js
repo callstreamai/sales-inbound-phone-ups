@@ -1,3 +1,4 @@
+import { unitMaterialAnswer } from './inventory/vehicleAnswer.js';
 import { cleanInventoryText } from './inventory/text.js';
 import express from 'express';
 import helmet from 'helmet';
@@ -5,7 +6,7 @@ import morgan from 'morgan';
 import { z } from 'zod';
 import { findDealer, allDealers, salesStatus } from './dealers.js';
 import { getSnapshot, refreshDealer, refreshAll, startScheduler, cacheSummary, loadSeed, knownSources } from './inventory/cache.js';
-import { searchVehicles, facets, requestedModels, findByStockOrVin } from './inventory/search.js';
+import { searchVehicles, facets, requestedModels, findByStockOrVin, normalizeCondition } from './inventory/search.js';
 import { spokenVehicle, spokenResults, spokenPrice, spokenDetails } from './inventory/spoken.js';
 import { vinStillListed } from './inventory/liveCheck.js';
 import { buildAdf } from './lead/adf.js';
@@ -43,7 +44,7 @@ const SearchSchema = z.object({
   ...DealerRef,
   models: z.array(z.string().trim().min(1).max(100)).max(8).nullish().transform(v => v || []),
   condition: optStr, year: optNum, make: optStr, model: optStr, trim: optStr, fuel_type: optStr,
-  body_style: optStr, color: optStr, max_price: optNum, max_mileage: optNum, stock: optStr, vin: optStr, vehicle_interest_text: optStr,
+  body_style: optStr, color: optStr, max_price: optNum, max_mileage: optNum, max_used_mileage: optNum, stock: optStr, vin: optStr, vehicle_interest_text: optStr,
 });
 const VehicleSchema = z.object({ ...DealerRef, stock: optStr, vin: optStr });
 const LeadSchema = z.object({
@@ -91,6 +92,30 @@ app.post('/call/start', requireAuth, (req, res) => {
     sales_transfer_number: dealer.sales_transfer_number || dealer.sales_phone || '', service_phone: dealer.service_phone || '', parts_phone: dealer.parts_phone || '',
     ...salesStatus(dealer), inventory_ready: snap.vehicles.length > 0, new_count: counts.new, used_count: counts.used, inventory_as_of: snap.refreshed_at || '',
   });
+});
+
+// Read-only vehicle helper; deterministic material answers prevent cross-unit inference.
+app.post('/vehicle/answer', requireAuth, async (req, res) => {
+  const { question, vehicle_facts: facts } = req.body || {};
+  if (typeof question !== 'string' || !question.trim() || question.length > 3000 || !facts || typeof facts !== 'object' || !Array.isArray(facts.units) || facts.units.length > 3 || JSON.stringify(facts).length > 16000) {
+    return res.status(400).json({ success: false, status: 'invalid_question' });
+  }
+  const material = unitMaterialAnswer(question, facts);
+  if (material) return res.json(material);
+  try {
+    const result = await fetch('https://alphadrive-sales-helper-staging.onrender.com/assist', {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${WEBHOOK_SECRET}` },
+      body: JSON.stringify({ question, vehicle_facts: facts }), signal: AbortSignal.timeout(11000),
+    });
+    if (!result.ok) throw new Error('helper_unavailable');
+    const answer = await result.json();
+    return res.json({ ...answer, helper_source: 'openai' });
+  } catch {
+    if (/bz|b z/i.test(question) && /woodland/i.test(question) && /difference|compare|versus|vs/i.test(question)) {
+      return res.json({ success: true, status: 'answered', helper_source: 'verified_manufacturer_fallback', helper_answer: 'Both are fully electric. Woodland is a separate, larger, adventure-focused SUV with standard all-wheel drive and more cargo space.', helper_sales_note: 'Answered bZ versus Woodland from verified manufacturer guidance while OpenAI helper unavailable.' });
+    }
+    return res.json({ success: false, status: 'unavailable', helper_answer: 'Sales can confirm that specific detail for you.', helper_sales_note: '' });
+  }
 });
 
 app.post('/inventory/search', requireAuth, (req, res) => {
@@ -170,12 +195,25 @@ function searchPayload(snap, q) {
       if (r.matches.length) { matches = r.matches; notes = r.notes; relaxed = true; broadened = `Nothing matched exactly; closest units shown after ignoring ${drop.join(', ')}.`; break; }
     }
   }
-  const top = matches.slice(0, 3);
+  // When shopping either condition, show a representative from each group.
+  const representatives = !stockHit && !normalizeCondition(q.condition)
+    ? [matches.find(v => v.condition === 'new'), matches.find(v => v.condition !== 'new')].filter(Boolean) : [];
+  const top = [...new Set([...representatives, ...matches])].slice(0, 3);
+  const newMatches = matches.filter(v => v.condition === 'new');
+  const usedMatches = matches.filter(v => v.condition !== 'new');
+  const groupSummary = (label, vehicles) => {
+    const priced = vehicles.filter(v => v.price && (label === 'New' || v.price_type !== 'msrp'));
+    const prices = priced.map(v => v.price);
+    return `${label}: ${vehicles.length} matching listing${vehicles.length === 1 ? '' : 's'}${prices.length ? `, listed prices from ${spokenPrice(Math.min(...prices))} to ${spokenPrice(Math.max(...prices))}` : ', no verified listed prices'}${priced.some(v => v.price_type === 'msrp') ? ' (new MSRP where indicated)' : ''}.`;
+  };
+  const comparison = !stockHit && !normalizeCondition(q.condition) && !relaxed
+    ? `${groupSummary('New', newMatches)} ${groupSummary('Used', usedMatches)} These are listings, including any in-transit or in-production units, not confirmed on-lot availability.` : '';
   const modelPool = q.model ? searchVehicles(snap.vehicles, { condition: q.condition, make: q.make, model: q.model }).matches : matches;
   const f = facets(modelPool);
   return {
     stock_queried: stockQueried, stock_found: Boolean(stockHit), stock_spoken: q.stock ? q.stock.toUpperCase().replace(/[^A-Z0-9]/g, '').split('').join(' ') : '',
     success: true, found: matches.length > 0, status: matches.length ? (relaxed ? 'partial_match' : 'match') : 'no_match', match_count: matches.length, exact_match_count: relaxed ? 0 : matches.length, alternative_count: relaxed ? matches.length : 0, broadened_note: broadened,
+    condition_comparison_spoken: comparison, new_match_count: newMatches.length, used_match_count: usedMatches.length,
     model_total: modelPool.length, results_spoken: spokenResults(top, matches.length, q, { relaxed }),
     no_match_spoken: matches.length ? '' : (modelPool.length ? `I don't see one matching everything you asked for, but I do have ${modelPool.length} ${[q.make, q.model].filter(Boolean).join(' ')} listings.` : `I'm not seeing that in stock right now.`),
     relaxed_note: broadened || (relaxed ? `These are alternatives, not exact matches. Unmet requirements: ${[...new Set(notes.flat())].map(n => ({ color_miss: 'exterior color', year_near: 'model year', trim_miss: 'trim', fuel_miss: 'fuel type', body_miss: 'body style', slightly_over_budget: 'budget' }[n] || n)).join(', ')}.` : ''),
