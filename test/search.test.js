@@ -96,3 +96,35 @@ test('model interests preserve order and distinct Toyota names', () => {
   assert.deepEqual(requestedModels({ model: 'Corolla 4Runner' }), ['corolla', '4runner']);
   assert.deepEqual(requestedModels({ models: ['Civic', 'Accord'] }), ['civic', 'accord']);
 });
+
+test('both or undecided retains both conditions; explicit conditions narrow', () => {
+  for (const condition of ['', 'both', 'either', 'not sure', 'new and used']) {
+    assert.equal(searchVehicles(inv, { model: 'RAV4', condition }).matches.length, 3);
+  }
+  assert.equal(searchVehicles(inv, { model: 'RAV4', condition: 'new' }).matches.length, 2);
+  assert.equal(searchVehicles(inv, { model: 'RAV4', condition: 'used' }).matches.length, 1);
+});
+
+test('bZ legacy alias matches seven regular units and never Woodland', () => {
+  const ev = { ...inv[0], model: 'bZ', fuel: 'Electric Fuel System' };
+  const vehicles = [
+    ...Array.from({ length: 6 }, (_, i) => ({ ...ev, stock: 'N' + i })),
+    { ...ev, stock: 'U', condition: 'used', mileage: 5494 },
+    { ...ev, stock: 'W', model: 'bZ Woodland' },
+    { ...ev, stock: 'H', model: 'RAV4', fuel: 'Hybrid' },
+  ];
+  for (const model of ['bZ', 'bZ4X']) {
+    const result = searchVehicles(vehicles, { model, condition: 'new and used', fuel_type: 'electric' });
+    assert.equal(result.matches.length, 7);
+    assert.ok(result.matches.every(v => v.model === 'bZ'));
+  }
+  assert.deepEqual(detectModels('bZ Woodland versus bZ'), ['bz woodland', 'bz']);
+  assert.deepEqual(searchVehicles(vehicles, { model: 'bZ Woodland' }).matches.map(v => v.stock), ['W']);
+  assert.equal(searchVehicles(vehicles, { fuel_type: 'electric' }).matches.length, 8);
+});
+
+test('used-only mileage ceiling retains new listings and excludes unknown used mileage', () => {
+  const vehicles = [...inv, { ...inv[2], stock: 'old', mileage: 40000 }, { ...inv[2], stock: 'unknown', mileage: null }];
+  const r = searchVehicles(vehicles, { model: 'RAV4', condition: 'both', max_used_mileage: 30000 });
+  assert.deepEqual(r.matches.map(v => v.stock), ['3', '2', '1']);
+});

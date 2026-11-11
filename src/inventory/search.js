@@ -10,6 +10,10 @@ function spoken(s) { let t = norm(s); for (const [re, rep] of SPOKEN) t = t.repl
 
 function modelMatch(v, want) {
   if (!want) return 0;
+  // bZ succeeds bZ4X; Woodland remains a distinct model, never a prefix match.
+  const family = s => squash(spoken(s)).replace(/^bz4x$/, 'bz');
+  const actualEV = family(v.model), requestedEV = family(want);
+  if (['bz', 'bzwoodland'].includes(requestedEV)) return actualEV === requestedEV ? 3 : -1;
   const a = squash(spoken(v.model)), b = squash(spoken(want));
   if (!b) return 0;
   if (a === b) return 3;
@@ -32,7 +36,7 @@ function textMatch(field, want) {
 }
 
 // Known model names, longest first so "Corolla Cross" wins over "Corolla".
-const MODELS = ['grand highlander', 'corolla cross hybrid', 'corolla hatchback', 'corolla hybrid', 'corolla cross', 'land cruiser', 'rav4 prime', 'prius prime', 'gr corolla', 'gr supra', 'highlander', 'sequoia', 'tacoma', 'tundra', '4runner', 'corolla', 'camry', 'sienna', 'prius', 'crown', 'bz4x', 'rav4', 'gr86', 'supra', 'venza', 'mirai', 'chr', 'avalon', 'yaris'];
+const MODELS = ['grand highlander', 'corolla cross hybrid', 'corolla hatchback', 'corolla hybrid', 'corolla cross', 'land cruiser', 'rav4 prime', 'prius prime', 'gr corolla', 'gr supra', 'highlander', 'sequoia', 'tacoma', 'tundra', '4runner', 'corolla', 'camry', 'sienna', 'prius', 'crown', 'bz woodland', 'bz4x', 'bz', 'rav4', 'gr86', 'supra', 'venza', 'mirai', 'chr', 'avalon', 'yaris'];
 export function detectModel(text) {
   const t = ' ' + spoken(text) + ' ';
   for (const m of MODELS) { const re = new RegExp('\\b' + m.replace(/ /g, ' ?') + 's?\\b'); if (re.test(t)) return m; }
@@ -85,8 +89,17 @@ export function findByStockOrVin(vehicles, { stock, vin }) {
   return null;
 }
 
+// Unknown/both conditions must never silently select the used-only branch.
+export function normalizeCondition(value) {
+  const t = norm(value);
+  if (t === 'new') return 'new';
+  if (/^(certified|cpo|certified pre owned)$/.test(t)) return 'certified';
+  if (/^(used|pre owned|preowned)$/.test(t)) return 'used';
+  return ''; // either, both, undecided, empty and legacy "new and used"
+}
+
 export function searchVehicles(vehicles, q) {
-  const wantCond = q.condition ? norm(q.condition) : '';
+  const wantCond = normalizeCondition(q.condition);
   const wantHybrid = /hybrid|plug|phev|electric|ev\b/.test(norm(q.fuel_type || ''));
   const scored = [];
   for (const v of vehicles) {
@@ -102,12 +115,17 @@ export function searchVehicles(vehicles, q) {
     if (q.model) { const m = modelMatch(v, q.model); if (m < 0) continue; score += m * 10; }
     if (q.year) { const y = Number(q.year); if (v.year === y) score += 6; else if (Math.abs(v.year - y) <= 1) { score += 1; notes.push('year_near'); } else continue; }
     if (q.trim) { const a = squash(spoken(v.trim)), b = squash(spoken(q.trim)); const m = a && b && (a === b || a.startsWith(b) || (b.length >= 6 && b.startsWith(a) && a.length >= 4)) ? 1 : -1; if (m > 0) score += 8; else notes.push('trim_miss'); }
+    if (/^(electric|ev|fully electric|battery electric|bev)$/.test(norm(q.fuel_type))) {
+      const hay = norm(`${v.fuel} ${v.model} ${v.engine}`);
+      if (!/electric|\bbev\b|\bbz(?:4x)?\b/.test(hay) || /hybrid|plug|phev/.test(hay)) continue;
+    }
     if (q.fuel_type) { const hay = norm(`${v.fuel} ${v.model} ${v.trim} ${v.engine}`); const isHybrid = /hybrid|plug|phev|electric|\bev\b|i force max/.test(hay); if (wantHybrid ? isHybrid : true) score += wantHybrid ? 6 : 0; else notes.push('fuel_miss'); }
     if (q.body_style) { const m = textMatch(`${v.body} ${v.model}`, q.body_style); if (m > 0) score += 3; else if (m < 0) notes.push('body_miss'); }
     if (q.color) { const m = colorMatches(v.exterior_color, q.color, v.make) ? 1 : -1; if (m > 0) score += 4; else notes.push('color_miss'); }
     if (q.max_price && !v.price) continue; // Unknown selling price cannot establish a budget match.
     if (q.max_price && v.price) { if (v.price <= Number(q.max_price)) score += 3; else if (v.price <= Number(q.max_price) * 1.08) { score -= 2; notes.push('slightly_over_budget'); } else continue; }
-    if (q.max_mileage && v.mileage != null && v.mileage > Number(q.max_mileage)) continue;
+    const mileageLimit = q.max_mileage || (v.condition !== 'new' && q.max_used_mileage);
+    if (mileageLimit && (v.mileage == null || v.mileage > Number(mileageLimit))) continue;
     if (v.in_transit) score -= 1;
     scored.push({ v, score, notes });
   }

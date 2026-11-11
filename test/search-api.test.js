@@ -107,3 +107,31 @@ test('multiple interests preserve groups, fair slots, alternatives and correctio
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test('bZ both-condition comparison counts all seven and presents each condition', async () => {
+  const dealer_id = 'balise-toyota-warwick';
+  const base = { year: 2026, make: 'Toyota', model: 'bZ', condition: 'new', trim: 'XLE', price: 42000, price_type: 'msrp', fuel: 'Electric Fuel System', features: [] };
+  loadSeed(dealer_id, [
+    ...Array.from({ length: 6 }, (_, i) => ({ ...base, vin: String(i).repeat(17), stock: 'N' + i, in_transit: i === 5 })),
+    { ...base, vin: 'U'.repeat(17), stock: 'U', condition: 'used', mileage: 5494, price: null },
+    { ...base, vin: 'W'.repeat(17), stock: 'W', model: 'bZ Woodland' },
+  ]);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  try {
+    const result = await (await fetch(`http://127.0.0.1:${server.address().port}/inventory/search`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ dealer_id, condition: 'new and used', model: 'bZ4X', max_used_mileage: 30000 }),
+    })).json();
+    assert.equal(result.match_count, 7);
+    assert.equal(result.new_match_count, 6);
+    assert.equal(result.used_match_count, 1);
+    assert.equal(result.vehicle_1_condition, 'new');
+    assert.equal(result.vehicle_2_condition, 'used');
+    assert.match(result.condition_comparison_spoken, /Used: 1 matching listing, no verified listed prices/);
+    assert.match(result.condition_comparison_spoken, /not confirmed on-lot/);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
