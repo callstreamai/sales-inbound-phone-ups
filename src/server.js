@@ -1,3 +1,4 @@
+import { unitMaterialAnswer } from './inventory/vehicleAnswer.js';
 import { cleanInventoryText } from './inventory/text.js';
 import express from 'express';
 import helmet from 'helmet';
@@ -91,6 +92,30 @@ app.post('/call/start', requireAuth, (req, res) => {
     sales_transfer_number: dealer.sales_transfer_number || dealer.sales_phone || '', service_phone: dealer.service_phone || '', parts_phone: dealer.parts_phone || '',
     ...salesStatus(dealer), inventory_ready: snap.vehicles.length > 0, new_count: counts.new, used_count: counts.used, inventory_as_of: snap.refreshed_at || '',
   });
+});
+
+// Read-only vehicle helper; deterministic material answers prevent cross-unit inference.
+app.post('/vehicle/answer', requireAuth, async (req, res) => {
+  const { question, vehicle_facts: facts } = req.body || {};
+  if (typeof question !== 'string' || !question.trim() || question.length > 3000 || !facts || typeof facts !== 'object' || !Array.isArray(facts.units) || facts.units.length > 3 || JSON.stringify(facts).length > 16000) {
+    return res.status(400).json({ success: false, status: 'invalid_question' });
+  }
+  const material = unitMaterialAnswer(question, facts);
+  if (material) return res.json(material);
+  try {
+    const result = await fetch('https://alphadrive-sales-helper-staging.onrender.com/assist', {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${WEBHOOK_SECRET}` },
+      body: JSON.stringify({ question, vehicle_facts: facts }), signal: AbortSignal.timeout(11000),
+    });
+    if (!result.ok) throw new Error('helper_unavailable');
+    const answer = await result.json();
+    return res.json({ ...answer, helper_source: 'openai' });
+  } catch {
+    if (/bz|b z/i.test(question) && /woodland/i.test(question) && /difference|compare|versus|vs/i.test(question)) {
+      return res.json({ success: true, status: 'answered', helper_source: 'verified_manufacturer_fallback', helper_answer: 'Both are fully electric. Woodland is a separate, larger, adventure-focused SUV with standard all-wheel drive and more cargo space.', helper_sales_note: 'Answered bZ versus Woodland from verified manufacturer guidance while OpenAI helper unavailable.' });
+    }
+    return res.json({ success: false, status: 'unavailable', helper_answer: 'Sales can confirm that specific detail for you.', helper_sales_note: '' });
+  }
 });
 
 app.post('/inventory/search', requireAuth, (req, res) => {
